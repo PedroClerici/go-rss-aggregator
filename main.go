@@ -1,27 +1,33 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 	"net/http"
-	"os"
 
-	"github.com/go-chi/chi"
+	"github.com/PedroClerici/go-rss-aggregator/internal/database"
+	"github.com/PedroClerici/go-rss-aggregator/routes"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/joho/godotenv"
+
+	_ "github.com/lib/pq"
 )
 
 func main() {
-	// Read your env file(s) and load them into ENV for this process.
-	godotenv.Load()
+	settings := getSettings()
 
-	portString := os.Getenv("PORT")
-	if portString == "" {
-		log.Fatal("PORT variable not found in the environment")
+	// Opens a connection to database.
+	conn, err := sql.Open("postgres", settings.databaseURL)
+	if err != nil {
+		log.Fatal("Unable to connect to database")
 	}
+
+	db := database.New(conn)
 
 	router := chi.NewRouter()
 
-	// CORS set up
+	// Middlewares setup
 	router.Use(cors.Handler(cors.Options{
     AllowedOrigins:   []string{"https://*", "http://*"},
     AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -30,18 +36,19 @@ func main() {
     AllowCredentials: false,
     MaxAge:           300,
   }))
+	router.Use(middleware.Logger)
 
 	server := &http.Server{
 		Handler: router,
-		Addr: ":" + portString,
+		Addr: ":" + settings.port,
 	}
 
-	router.Get("/health", handlerReadiness)
-	router.Get("/error", handlerError)
+	router.Mount("/", routes.StatusResource{}.Routes())
+	router.Mount("/users", routes.UsersResource{DB: db}.Routes())
 
-	log.Printf("Server starting on port: %s\n", portString)
-	err := server.ListenAndServe()
-	if err != nil {
+	log.Printf("Server starting on port: %s\n", settings.port)
+
+	if server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
